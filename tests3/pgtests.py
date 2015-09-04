@@ -361,6 +361,17 @@ class PGTestCase(unittest.TestCase):
         self.cursor.execute("insert into t1 values (1)")
         self.failUnlessRaises(pyodbc.Error, self.cnxn.execute, "insert into t1 values (1)")
 
+    def test_cnxn_execute_error(self):
+        """
+        Make sure that Connection.execute (not Cursor) errors are not "eaten".
+        """
+        self.cursor.execute("create table t1(a int primary key)")
+        self.cursor.execute("insert into t1 values (1)")
+
+        # This should fail
+        self.failUnlessRaises(pyodbc.Error, self.cnxn.execute, "insert into t1 values (1)")
+
+
     def test_row_repr(self):
         self.cursor.execute("create table t1(a int, b int, c int, d int)");
         self.cursor.execute("insert into t1 values(1,2,3,4)")

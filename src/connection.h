@@ -48,6 +48,22 @@ struct Connection
     // The connection timeout in seconds.
     long timeout;
 
+    PyObject* sqlchar_errors;
+    // The error handling string to pass to the decode function when converting SQLCHAR to
+    // Unicode.  If NULL, "strict" will be used.
+
+    PyObject* sqlchar_encoding;
+    // The encoding to use when converting SQLCHAR to/from Unicode.  If NULL, "utf-8" will be
+    // used.
+
+    PyObject* sqlwchar_errors;
+    // The error handling string to pass to the decode function when converting SQLWCHAR to
+    // Unicode.  If NULL, "strict" will be used.
+
+    PyObject* sqlwchar_encoding;
+    // The encoding to use when converting SQLWCHAR to/from Unicode.  If NULL, "utf-16" will be
+    // used.
+
     PyObject* unicode_encoding;
     // The optional Unicode encoding of the database.  Unicode strings are
     // encoded when sent and decoded when received.

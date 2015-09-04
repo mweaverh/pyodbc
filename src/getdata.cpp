@@ -17,6 +17,7 @@ void GetData_init()
     PyDateTime_IMPORT;
 }
 
+
 class DataBuffer
 {
     // Manages memory that GetDataString uses to read data in chunks.  We use the same function (GetDataString) to read
@@ -41,6 +42,7 @@ class DataBuffer
 
 private:
     SQLSMALLINT dataType;
+    SQLSMALLINT outputType;
 
     char* buffer;
     Py_ssize_t bufferSize;      // How big is the buffer.
@@ -54,12 +56,18 @@ private:
 public:
     int null_size;              // How much room, in bytes, to add for null terminator: binary -> 0, other -> same as a element_size
 
-    DataBuffer(SQLSMALLINT dataType, char* stackBuffer, SQLLEN stackBufferSize)
+    DataBuffer(SQLSMALLINT dataType, SQLSMALLINT outputType, char* stackBuffer, SQLLEN stackBufferSize)
     {
         // dataType
         //   The type of data we will be reading: SQL_C_CHAR, SQL_C_WCHAR, or SQL_C_BINARY.
+        //
+        // outputType
+        //   The type of data to return.  This is often the same as `dataType`, but if this is
+        //   Python 3 and unicode_always is set, it will be SQL_C_WCHAR even when dataType is
+        //   SQL_C_CHAR.
 
-        this->dataType = dataType;
+        this->dataType   = dataType;
+        this->outputType = outputType;
 
         element_size = (int)((dataType == SQL_C_WCHAR)  ? ODBCCHAR_SIZE : sizeof(char));
         null_size    = (dataType == SQL_C_BINARY) ? 0 : element_size;
@@ -558,6 +566,90 @@ static PyObject* GetDataBit(Cursor* cur, Py_ssize_t iCol)
 }
 
 
+static PyObject* GetDataWChar(Cursor* cur, Py_ssize_t iCol)
+{
+    // Reads SQLWCHAR column data and returns a Unicode object.
+
+    SQLRETURN ret;
+
+    // Since we don't know how large, we'll try reading into an 8K stack buffer.  I would
+    // expect this to work most of the time and we'll then create a Unicode object directly
+    // from it.
+    //
+    // If it doesn't work, hopefully we've at least gotten the length;
+
+    const SQLLEN cchTmp = 8192;
+    const SQLLEN cbTmp  = cchTmp * sizeof(SQLWCHAR);
+    SQLWCHAR pchTmp[cbTmp];
+    SQLLEN cbData = 0;
+
+    Py_BEGIN_ALLOW_THREADS
+    ret = SQLGetData(cur->hstmt, (SQLUSMALLINT)(iCol+1), SQL_C_WCHAR, pchTmp, cbTmp, &cbData);
+    Py_END_ALLOW_THREADS;
+
+    if (cbData == SQL_NULL_DATA || (ret == SQL_SUCCESS && cbData < 0))
+    {
+        // HACK: FreeTDS 0.91 on OS/X returns -4 for NULL data instead of SQL_NULL_DATA (-1).
+        // I've traced into the code and it appears to be the result of assigning -1 to a
+        // SQLLEN:
+        Py_RETURN_NONE;
+    }
+
+    if (!SQL_SUCCEEDED(ret))
+        return RaiseErrorFromHandle("SQLGetData", cur->cnxn->hdbc, cur->hstmt);
+
+    if (ret == SQL_SUCCESS || ret == SQL_NO_DATA)
+        return PyUnicode_DecodeUTF16((const char*)pchTmp, (Py_ssize_t)cbData, "strict", 0);
+
+    I(ret == SQL_SUCCESS_WITH_INFO);
+
+    if (cbData != SQL_NO_TOTAL)
+    {
+        // The data didn't fit into the buffer, but at least we know how much there is.  One
+        // allocation and one more read is all we need.
+
+        SQLWCHAR* pchBuffer = pyodbc_allocate(cbData + sizeof(SQLWCHAR));
+        if (pchBuffer == 0)
+            return PyErr_NoMemory();
+
+        Py_BEGIN_ALLOW_THREADS
+        ret = SQLGetData(cur->hstmt, (SQLUSMALLINT)(iCol+1), SQL_C_WCHAR, pchTmp, cbTmp, &cbData);
+        Py_END_ALLOW_THREADS;
+
+    }
+
+
+    // If the length is SQL_NO_TOTAL, then the database doesn't actually know the length
+    // yet.  In that case we'll keep adding 20K.  Otherwise we know the total and we'll
+    // allocate exactly that.
+
+    SQLLEN cbBuffer = (cbData == SQL_NO_TOTAL) ? (cbData + 20 * 1024) : cbData + 1;
+
+    SQLWCHAR* pchBuffer = pyodbc_allocate(cbBuffer);
+    if (pchBuffer == 0)
+    {
+        Py_NoMemory();
+        return 0;
+    }
+
+    memcpy(pchBuffer, pchTemp, cbData);
+
+    for(;;)
+    {
+        char* offset = ((char*)pchBuffer
+
+        Py_BEGIN_ALLOW_THREADS
+        ret = SQLGetData(cur->hstmt, (SQLUSMALLINT)(iCol+1), SQL_C_WCHAR, pchTmp, cbTmp, &cbData);
+        Py_END_ALLOW_THREADS;
+
+    }
+
+    if (!SQL_SUCCEEDED(ret) && ret != SQL_NO_DATA)
+            return RaiseErrorFromHandle("SQLGetData", cur->cnxn->hdbc, cur->hstmt);
+
+
+}
+
 static PyObject* GetDataLong(Cursor* cur, Py_ssize_t iCol)
 {
     ColumnInfo* pinfo = &cur->colinfos[iCol];
@@ -712,8 +804,12 @@ PyObject* GetData(Cursor* cur, Py_ssize_t iCol)
     switch (pinfo->sql_type)
     {
     case SQL_WCHAR:
+        return GetDataWChar(cur, iCol);
+
     case SQL_WVARCHAR:
     case SQL_WLONGVARCHAR:
+        return Get
+
     case SQL_CHAR:
     case SQL_VARCHAR:
     case SQL_LONGVARCHAR:

@@ -124,6 +124,22 @@ bool SQLWChar::Convert(PyObject* o)
     }
 }
 
+PyObject* PyUnicode_FromSQLCHAR(Connection* cnxn, const SQLCHAR* sz, Py_ssize_t cch)
+{
+    const char* szErrors = "strict";
+    if (cnxn->sqlchar_encoding_errors)
+    {
+        if (PyUnicode_Check(cnxn->sqlchar_encoding_errors))
+            szErrors = PyUnicode_AsUTF8(cnxn->sqlchar_encoding_errors);
+        else if (PyBytes_Check(cnxn->sqlchar_encoding_errors))
+            szErrors = PyBytes_AsString(cnxn->sqlchar_encoding_errors);
+    }
+
+    if (!cnxn->sqlchar_encoding)
+        return PyUnicode_DecodeUTF8(sz, cch, szError);
+
+}
+
 PyObject* PyUnicode_FromSQLWCHAR(const SQLWCHAR* sz, Py_ssize_t cch)
 {
     // Create a Python Unicode object from a zero-terminated SQLWCHAR.
