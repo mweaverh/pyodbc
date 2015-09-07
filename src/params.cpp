@@ -138,6 +138,8 @@ static bool GetBytesInfo(Cursor* cur, Py_ssize_t index, PyObject* param, ParamIn
 
     Py_ssize_t len = PyBytes_GET_SIZE(param);
 
+    printf("MAX: %d\n", (int)cur->cnxn->binary_maxlength);
+
 #if PY_MAJOR_VERSION >= 3
     info.ValueType = SQL_C_BINARY;
     info.ColumnSize = (SQLUINTEGER)max(len, 1);

@@ -30,17 +30,12 @@ def _generate_test_string(length):
 
 class PGTestCase(unittest.TestCase):
 
-    # These are from the C++ code.  Keep them up to date.
+    FENCEPOST_SIZES = [ 0, 1, 255, 256, 510, 511, 512, 1023, 1024, 2047, 2048, 4000,
+                        4095, 4096, 4097, 10 * 1024, 20 * 1024 ]
+    # Different size varchar and binary values to test.
 
-    # If we are reading a binary, string, or unicode value and do not know how large it is, we'll try reading 2K into a
-    # buffer on the stack.  We then copy into a new Python object.
-    SMALL_READ  = 2048
-
-    # A read guaranteed not to fit in the MAX_STACK_STACK stack buffer, but small enough to be used for varchar (4K max).
-    LARGE_READ = 4000
-
-    SMALL_STRING = _generate_test_string(SMALL_READ)
-    LARGE_STRING = _generate_test_string(LARGE_READ)
+    STR_FENCEPOSTS = [ _generate_test_string(size) for size in FENCEPOST_SIZES ]
+    BYTE_FENCEPOSTS    = [ bytes(s, 'ascii') for s in STR_FENCEPOSTS ]
 
     def __init__(self, connection_string, ansi, method_name):
         unittest.TestCase.__init__(self, method_name)
@@ -98,10 +93,12 @@ class PGTestCase(unittest.TestCase):
         self.assertEqual(value, result)
 
 
-    def _test_strtype(self, sqltype, value, colsize=None):
+
+    def _test_strtype(self, sqltype, value, resulttype=None, colsize=None):
         """
         The implementation for string, Unicode, and binary tests.
         """
+        assert colsize is None or isinstance(colsize, int), colsize
         assert colsize is None or (value is None or colsize >= len(value))
 
         if colsize:
@@ -109,13 +106,27 @@ class PGTestCase(unittest.TestCase):
         else:
             sql = "create table t1(s %s)" % sqltype
 
+        if resulttype is None:
+            resulttype = type(value)
+
         self.cursor.execute(sql)
         self.cursor.execute("insert into t1 values(?)", value)
+        print('>>>>>>>>', type(value))
+
+        # DO NOT CHECK IN
+        self.cnxn.commit()
+
         v = self.cursor.execute("select * from t1").fetchone()[0]
-        self.assertEqual(type(v), type(value))
 
         if value is not None:
             self.assertEqual(len(v), len(value))
+
+        # To allow buffer --> db --> bytearray tests, always convert the input to the expected result type before
+        # comparing.
+        if type(value) is not resulttype:
+            value = resulttype(value)
+
+        self.assertEqual(type(v), resulttype)
 
         self.assertEqual(v, value)
 
@@ -124,20 +135,18 @@ class PGTestCase(unittest.TestCase):
     #
 
     def test_empty_varchar(self):
-        self._test_strtype('varchar', '', self.SMALL_READ)
+        self._test_strtype('varchar', '')
 
     def test_null_varchar(self):
-        self._test_strtype('varchar', None, self.SMALL_READ)
+        self._test_strtype('varchar', None)
 
-    def test_large_null_varchar(self):
-        # There should not be a difference, but why not find out?
-        self._test_strtype('varchar', None, self.LARGE_READ)
-
-    def test_small_varchar(self):
-        self._test_strtype('varchar', self.SMALL_STRING, self.SMALL_READ)
-
-    def test_large_varchar(self):
-        self._test_strtype('varchar', self.LARGE_STRING, self.LARGE_READ)
+    # Generate a test for each fencepost size: test_varchar_0, etc.
+    def _maketest(value):
+        def t(self):
+            self._test_strtype('varchar', value, colsize=len(value))
+        return t
+    for value in STR_FENCEPOSTS:
+        locals()['test_varchar_%s' % len(value)] = _maketest(value)
 
     def test_varchar_many(self):
         self.cursor.execute("create table t1(c1 varchar(300), c2 varchar(300), c3 varchar(300))")
@@ -153,6 +162,30 @@ class PGTestCase(unittest.TestCase):
         self.assertEqual(v2, row.c2)
         self.assertEqual(v3, row.c3)
 
+    #
+    # binary
+    #
+
+    def test_binary_null(self):
+        self._test_strtype('bytea', None)
+
+    # bytearray
+
+    def _maketest(value):
+        def t(self):
+                self._test_strtype('bytea', bytearray(value), resulttype=bytearray)
+        return t
+    for value in BYTE_FENCEPOSTS:
+        locals()['test_binary_bytearray_%s' % len(value)] = _maketest(value)
+
+    # bytes
+
+    def _maketest(value):
+        def t(self):
+                self._test_strtype('bytea', bytes(value))
+        return t
+    for value in BYTE_FENCEPOSTS:
+        locals()['test_binary_bytes_%s' % len(value)] = _maketest(value)
 
 
     def test_small_decimal(self):
@@ -413,11 +446,6 @@ def main():
     if options.verbose:
         cnxn = pyodbc.connect(connection_string, ansi=options.ansi)
         print_library_info(cnxn)
-        # print 'library:', os.path.abspath(pyodbc.__file__)
-        # print 'odbc:    %s' % cnxn.getinfo(pyodbc.SQL_ODBC_VER)
-        # print 'driver:  %s %s' % (cnxn.getinfo(pyodbc.SQL_DRIVER_NAME), cnxn.getinfo(pyodbc.SQL_DRIVER_VER))
-        # print 'driver supports ODBC version %s' % cnxn.getinfo(pyodbc.SQL_DRIVER_ODBC_VER)
-        # print 'unicode:', pyodbc.UNICODE_SIZE, 'sqlwchar:', pyodbc.SQLWCHAR_SIZE
         cnxn.close()
 
     if options.test:

@@ -56,18 +56,12 @@ private:
 public:
     int null_size;              // How much room, in bytes, to add for null terminator: binary -> 0, other -> same as a element_size
 
-    DataBuffer(SQLSMALLINT dataType, SQLSMALLINT outputType, char* stackBuffer, SQLLEN stackBufferSize)
+    DataBuffer(SQLSMALLINT dataType, char* stackBuffer, SQLLEN stackBufferSize)
     {
         // dataType
         //   The type of data we will be reading: SQL_C_CHAR, SQL_C_WCHAR, or SQL_C_BINARY.
-        //
-        // outputType
-        //   The type of data to return.  This is often the same as `dataType`, but if this is
-        //   Python 3 and unicode_always is set, it will be SQL_C_WCHAR even when dataType is
-        //   SQL_C_CHAR.
 
-        this->dataType   = dataType;
-        this->outputType = outputType;
+        this->dataType = dataType;
 
         element_size = (int)((dataType == SQL_C_WCHAR)  ? ODBCCHAR_SIZE : sizeof(char));
         null_size    = (dataType == SQL_C_BINARY) ? 0 : element_size;
@@ -570,19 +564,17 @@ static PyObject* GetDataWChar(Cursor* cur, Py_ssize_t iCol)
 {
     // Reads SQLWCHAR column data and returns a Unicode object.
 
-    SQLRETURN ret;
-
-    // Since we don't know how large, we'll try reading into an 8K stack buffer.  I would
-    // expect this to work most of the time and we'll then create a Unicode object directly
-    // from it.
     //
-    // If it doesn't work, hopefully we've at least gotten the length;
+    // First read into temporary stack buffer for performance.
+    //
+
+    SQLRETURN ret;
 
     const SQLLEN cchTmp = 8192;
     const SQLLEN cbTmp  = cchTmp * sizeof(SQLWCHAR);
     SQLWCHAR pchTmp[cbTmp];
-    SQLLEN cbData = 0;
 
+    SQLLEN cbData = 0;
     Py_BEGIN_ALLOW_THREADS
     ret = SQLGetData(cur->hstmt, (SQLUSMALLINT)(iCol+1), SQL_C_WCHAR, pchTmp, cbTmp, &cbData);
     Py_END_ALLOW_THREADS;
@@ -598,57 +590,177 @@ static PyObject* GetDataWChar(Cursor* cur, Py_ssize_t iCol)
     if (!SQL_SUCCEEDED(ret))
         return RaiseErrorFromHandle("SQLGetData", cur->cnxn->hdbc, cur->hstmt);
 
-    if (ret == SQL_SUCCESS || ret == SQL_NO_DATA)
+    if (ret == SQL_SUCCESS)
         return PyUnicode_DecodeUTF16((const char*)pchTmp, (Py_ssize_t)cbData, "strict", 0);
 
     I(ret == SQL_SUCCESS_WITH_INFO);
 
-    if (cbData != SQL_NO_TOTAL)
-    {
-        // The data didn't fit into the buffer, but at least we know how much there is.  One
-        // allocation and one more read is all we need.
+    // ODBC's API is efficient but can be unexpected.  If the first read didn't
+    // fit, it writes as much as it can (including a NULL terminator) but
+    // returns us the "length of the data remaining in the specified column
+    // prior to the current call to SQLGetData".
+    //
+    // https://msdn.microsoft.com/en-us/library/ms715441(v=vs.85).aspx
 
-        SQLWCHAR* pchBuffer = pyodbc_allocate(cbData + sizeof(SQLWCHAR));
-        if (pchBuffer == 0)
-            return PyErr_NoMemory();
+    //
+    // If too big but we got the size, allocate a buffer and read again.
+    //
+
+    Ptr<SQLWCHAR> buffer(pchTmp, cbTmp, false);
+
+    size_t cbRead      = buffer.ByteLength() - sizeof(SQLWCHAR);
+    size_t cbRemaining = 0;     // room left in buffer
+
+    while (cbData == SQL_NO_TOTAL)
+    {
+        // When the length is SQL_NO_TOTAL the database doesn't actually know
+        // the length yet.  Increase the buffer and try again.  Eventually it
+        // will give us a number.
+
+        cbRemaining = 20 * 1024;
+
+        if (!buffer.ReallocByteLength(buffer.ByteLength() + cbRemaining))
+            return 0;
 
         Py_BEGIN_ALLOW_THREADS
-        ret = SQLGetData(cur->hstmt, (SQLUSMALLINT)(iCol+1), SQL_C_WCHAR, pchTmp, cbTmp, &cbData);
+        ret = SQLGetData(cur->hstmt, (SQLUSMALLINT)(iCol+1), SQL_C_WCHAR,
+                         buffer + cbRead, // End of data we already read (minus NULL terminator)
+                         cbRemaining, &cbData);
         Py_END_ALLOW_THREADS;
-
     }
 
+    if (!SQL_SUCCEEDED(ret))
+        return RaiseErrorFromHandle("SQLGetData", cur->cnxn->hdbc, cur->hstmt);
 
-    // If the length is SQL_NO_TOTAL, then the database doesn't actually know the length
-    // yet.  In that case we'll keep adding 20K.  Otherwise we know the total and we'll
-    // allocate exactly that.
+    // At this point we have a number, but it includes the amount of the last
+    // write *without* its NULL terminator.  So a complete write that filled the
+    // buffer would return to us (cbRemaining - sizeof(SQLWCHAR)).  If it is
+    // that or less, the write was complete and we're finished.  If it is more,
+    // we need one more read.
 
-    SQLLEN cbBuffer = (cbData == SQL_NO_TOTAL) ? (cbData + 20 * 1024) : cbData + 1;
+    size_t cbString = cbRead + cbData;
 
-    SQLWCHAR* pchBuffer = pyodbc_allocate(cbBuffer);
-    if (pchBuffer == 0)
+    if (cbString > cbRemaining - sizeof(SQLWCHAR))
     {
-        Py_NoMemory();
-        return 0;
-    }
+        if (!buffer.ReallocByteLength(cbString + sizeof(SQLWCHAR)))
+            return 0;
 
-    memcpy(pchBuffer, pchTemp, cbData);
-
-    for(;;)
-    {
-        char* offset = ((char*)pchBuffer
+        cbRemaining = cbString - cbRead + sizeof(SQLWCHAR);
 
         Py_BEGIN_ALLOW_THREADS
-        ret = SQLGetData(cur->hstmt, (SQLUSMALLINT)(iCol+1), SQL_C_WCHAR, pchTmp, cbTmp, &cbData);
+        ret = SQLGetData(cur->hstmt, (SQLUSMALLINT)(iCol+1), SQL_C_WCHAR,
+                         buffer + cbRead, // End of data we already read (minus NULL terminator)
+                         cbRemaining, &cbData);
         Py_END_ALLOW_THREADS;
 
-    }
-
-    if (!SQL_SUCCEEDED(ret) && ret != SQL_NO_DATA)
+        if (!SQL_SUCCEEDED(ret))
             return RaiseErrorFromHandle("SQLGetData", cur->cnxn->hdbc, cur->hstmt);
+    }
 
-
+    return PyUnicode_DecodeUTF16((const char*)(SQLWCHAR*)buffer, (Py_ssize_t)cbString, "strict", 0);
 }
+
+
+static PyObject* GetDataBytes(Cursor* cur, Py_ssize_t iCol)
+{
+    // Reads binary data and returns a bytes object.
+
+    //
+    // First read into temporary stack buffer for performance.
+    //
+
+    SQLRETURN ret;
+
+    const SQLLEN cchTmp = 8192;
+    const SQLLEN cbTmp  = cchTmp * sizeof(SQLWCHAR);
+    SQLWCHAR pchTmp[cbTmp];
+
+    SQLLEN cbData = 0;
+    Py_BEGIN_ALLOW_THREADS
+    ret = SQLGetData(cur->hstmt, (SQLUSMALLINT)(iCol+1), SQL_C_BINARY, pchTmp, cbTmp, &cbData);
+    Py_END_ALLOW_THREADS;
+
+    if (cbData == SQL_NULL_DATA || (ret == SQL_SUCCESS && cbData < 0))
+    {
+        // HACK: FreeTDS 0.91 on OS/X returns -4 for NULL data instead of SQL_NULL_DATA (-1).
+        // I've traced into the code and it appears to be the result of assigning -1 to a
+        // SQLLEN:
+        Py_RETURN_NONE;
+    }
+
+    if (!SQL_SUCCEEDED(ret))
+        return RaiseErrorFromHandle("SQLGetData", cur->cnxn->hdbc, cur->hstmt);
+
+    if (ret == SQL_SUCCESS)
+        return PyBytes_FromStringAndSize((const char*)pchTmp, (Py_ssize_t)cbData);
+
+    I(ret == SQL_SUCCESS_WITH_INFO);
+
+    // ODBC's API is efficient but can be unexpected.  If the first read didn't
+    // fit, it writes as much as it can but returns us the "length of the data
+    // remaining in the specified column prior to the current call to
+    // SQLGetData".
+    //
+    // https://msdn.microsoft.com/en-us/library/ms715441(v=vs.85).aspx
+
+    //
+    // If too big but we got the size, allocate a buffer and read again.
+    //
+
+    Ptr<SQLWCHAR> buffer(pchTmp, cbTmp, false);
+
+    size_t cbRead      = buffer.ByteLength();
+    size_t cbRemaining = 0;     // room left in buffer
+
+    while (cbData == SQL_NO_TOTAL)
+    {
+        // When the length is SQL_NO_TOTAL the database doesn't actually know
+        // the length yet.  Increase the buffer and try again.  Eventually it
+        // will give us a number.
+
+        cbRemaining = 20 * 1024;
+
+        if (!buffer.ReallocByteLength(buffer.ByteLength() + cbRemaining))
+            return 0;
+
+        Py_BEGIN_ALLOW_THREADS
+        ret = SQLGetData(cur->hstmt, (SQLUSMALLINT)(iCol+1), SQL_C_WCHAR,
+                         buffer + cbRead, // End of data we already read
+                         cbRemaining, &cbData);
+        Py_END_ALLOW_THREADS;
+    }
+
+    if (!SQL_SUCCEEDED(ret))
+        return RaiseErrorFromHandle("SQLGetData", cur->cnxn->hdbc, cur->hstmt);
+
+    // At this point we have a number, but it includes the amount of the last
+    // write.  So a complete write that filled the buffer would return to us
+    // cbRemaining.  If it is that or less, the write was complete and we're
+    // finished.  If it is more, we need one more read.
+
+    size_t cbBytes = cbRead + cbData;
+
+    if (cbBytes > cbRemaining)
+    {
+        if (!buffer.ReallocByteLength(cbBytes))
+            return 0;
+
+        cbRemaining = cbBytes - cbRead;
+
+        Py_BEGIN_ALLOW_THREADS
+        ret = SQLGetData(cur->hstmt, (SQLUSMALLINT)(iCol+1), SQL_C_WCHAR,
+                         buffer + cbRead, // End of data we already read
+                         cbRemaining, &cbData);
+        Py_END_ALLOW_THREADS;
+
+        if (!SQL_SUCCEEDED(ret))
+            return RaiseErrorFromHandle("SQLGetData", cur->cnxn->hdbc, cur->hstmt);
+    }
+
+    return PyBytes_FromStringAndSize((const char*)(SQLWCHAR*)buffer, (Py_ssize_t)cbBytes);
+}
+
+
 
 static PyObject* GetDataLong(Cursor* cur, Py_ssize_t iCol)
 {
@@ -804,28 +916,23 @@ PyObject* GetData(Cursor* cur, Py_ssize_t iCol)
     switch (pinfo->sql_type)
     {
     case SQL_WCHAR:
-        return GetDataWChar(cur, iCol);
-
     case SQL_WVARCHAR:
     case SQL_WLONGVARCHAR:
-        return Get
+        return GetDataWChar(cur, iCol);
 
     case SQL_CHAR:
     case SQL_VARCHAR:
     case SQL_LONGVARCHAR:
     case SQL_GUID:
     case SQL_SS_XML:
-#if PY_VERSION_HEX >= 0x02060000
-    case SQL_BINARY:
-    case SQL_VARBINARY:
-    case SQL_LONGVARBINARY:
-#endif
         return GetDataString(cur, iCol);
 
-#if PY_VERSION_HEX < 0x02060000
     case SQL_BINARY:
     case SQL_VARBINARY:
     case SQL_LONGVARBINARY:
+#if PY_VERSION_HEX >= 0x02060000
+        return GetDataBytes(cur, iCol);
+#else
         return GetDataBuffer(cur, iCol);
 #endif
 

@@ -48,27 +48,21 @@ struct Connection
     // The connection timeout in seconds.
     long timeout;
 
-    PyObject* sqlchar_errors;
-    // The error handling string to pass to the decode function when converting SQLCHAR to
-    // Unicode.  If NULL, "strict" will be used.
-
     PyObject* sqlchar_encoding;
     // The encoding to use when converting SQLCHAR to/from Unicode.  If NULL, "utf-8" will be
     // used.
 
-    PyObject* sqlwchar_errors;
-    // The error handling string to pass to the decode function when converting SQLWCHAR to
+    PyObject* sqlchar_errors;
+    // The error handling string to pass to the decode function when converting SQLCHAR to
     // Unicode.  If NULL, "strict" will be used.
 
     PyObject* sqlwchar_encoding;
     // The encoding to use when converting SQLWCHAR to/from Unicode.  If NULL, "utf-16" will be
     // used.
 
-    PyObject* unicode_encoding;
-    // The optional Unicode encoding of the database.  Unicode strings are
-    // encoded when sent and decoded when received.
-    //
-    // If not provided, UCS-2 is used.
+    PyObject* sqlwchar_errors;
+    // The error handling string to pass to the decode function when converting SQLWCHAR to
+    // Unicode.  If NULL, "strict" will be used.
 
     // These are copied from cnxn info for performance and convenience.
 
@@ -96,7 +90,8 @@ struct Connection
  * Used by the module's connect function to create new connection objects.  If unable to connect to the database, an
  * exception is set and zero is returned.
  */
-PyObject* Connection_New(PyObject* pConnectString, bool fAutoCommit, bool fAnsi, bool fUnicodeResults, long timeout, bool fReadOnly);
+PyObject* Connection_New(PyObject* pConnectString, bool fAutoCommit, bool fAnsi, bool fUnicodeResults, long timeout, bool fReadOnly,
+                         PyObject* sqlchar_encoding, PyObject* sqlwchar_encoding);
 
 /*
  * Used by the Cursor to implement commit and rollback.

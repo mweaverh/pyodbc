@@ -140,7 +140,9 @@ static bool Connect(PyObject* pConnectString, HDBC hdbc, bool fAnsi, long timeou
 }
 
 
-PyObject* Connection_New(PyObject* pConnectString, bool fAutoCommit, bool fAnsi, bool fUnicodeResults, long timeout, bool fReadOnly)
+PyObject* Connection_New(PyObject* pConnectString, bool fAutoCommit, bool fAnsi, bool fUnicodeResults,
+                         long timeout, bool fReadOnly,
+                         PyObject* sqlchar_encoding, PyObject* sqlwchar_encoding)
 {
     // pConnectString
     //   A string or unicode object.  (This must be checked by the caller.)
@@ -205,6 +207,12 @@ PyObject* Connection_New(PyObject* pConnectString, bool fAutoCommit, bool fAnsi,
     cnxn->conv_types      = 0;
     cnxn->conv_funcs      = 0;
 
+    cnxn->sqlchar_encoding  = 0;
+    cnxn->sqlchar_errors    = 0;
+    cnxn->sqlwchar_encoding = 0;
+    cnxn->sqlwchar_errors   = 0;
+
+
     //
     // Initialize autocommit mode.
     //
@@ -267,6 +275,11 @@ PyObject* Connection_New(PyObject* pConnectString, bool fAutoCommit, bool fAnsi,
     cnxn->binary_maxlength       = p->binary_maxlength;
     cnxn->need_long_data_len     = p->need_long_data_len;
 
+    cnxn->sqlchar_encoding  = sqlchar_encoding;
+    Py_INCREF(cnxn->sqlchar_encoding);
+    cnxn->sqlwchar_encoding = sqlwchar_encoding;
+    Py_INCREF(cnxn->sqlwchar_encoding);
+
     return reinterpret_cast<PyObject*>(cnxn);
 }
 
@@ -325,7 +338,15 @@ static int Connection_clear(PyObject* self)
 
     Py_XDECREF(cnxn->searchescape);
     cnxn->searchescape = 0;
-    
+    Py_XDECREF(cnxn->sqlchar_encoding);
+    cnxn->sqlchar_encoding = 0;
+    Py_XDECREF(cnxn->sqlchar_errors);
+    cnxn->sqlchar_errors = 0;
+    Py_XDECREF(cnxn->sqlwchar_encoding);
+    cnxn->sqlwchar_encoding = 0;
+    Py_XDECREF(cnxn->sqlwchar_errors);
+    cnxn->sqlwchar_errors = 0;
+
     _clear_conv(cnxn);
 
     return 0;

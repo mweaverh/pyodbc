@@ -248,9 +248,14 @@ static keywordmap keywordmaps[] =
     { "host",     "server", 0 },
 };
 
+// TODO: Simplify argument parsing.
 
 static PyObject* mod_connect(PyObject* self, PyObject* args, PyObject* kwargs)
 {
+    // Validate the arguments and convert them to our internal format.  To
+    // simpilfy memory management, keep everything in a format that cleans
+    // itself up (e.g. "Object") so we can exit at any time.
+
     UNUSED(self);
 
     Object pConnectString = 0;
@@ -259,6 +264,8 @@ static PyObject* mod_connect(PyObject* self, PyObject* args, PyObject* kwargs)
     int fUnicodeResults = 0;
     int fReadOnly = 0;
     long timeout = 0;
+    Object sqlchar_encoding;
+    Object sqlwchar_encoding;
 
     Py_ssize_t size = args ? PyTuple_Size(args) : 0;
 
@@ -330,7 +337,21 @@ static PyObject* mod_connect(PyObject* self, PyObject* args, PyObject* kwargs)
                 fReadOnly = PyObject_IsTrue(value);
                 continue;
             }
-            
+            if (Text_EqualsI(key, "sqlchar_encoding"))
+            {
+                sqlchar_encoding = PyObject_Str(value);
+                if (!sqlchar_encoding)
+                    return 0;
+                continue;
+            }
+            if (Text_EqualsI(key, "sqlwchar_encoding"))
+            {
+                sqlwchar_encoding = PyObject_Str(value);
+                if (!sqlwchar_encoding)
+                    return 0;
+                continue;
+            }
+
             // Map DB API recommended names to ODBC names (e.g. user --> uid).
 
             for (size_t i = 0; i < _countof(keywordmaps); i++)
@@ -375,7 +396,22 @@ static PyObject* mod_connect(PyObject* self, PyObject* args, PyObject* kwargs)
             return 0;
     }
 
-    return (PyObject*)Connection_New(pConnectString.Get(), fAutoCommit != 0, fAnsi != 0, fUnicodeResults != 0, timeout, fReadOnly != 0);
+    // Provide defaults.  Do it here since we can exit easily if an allocation
+    // fails.
+
+    if (!sqlchar_encoding) {
+        sqlchar_encoding = PyString_FromString("utf_8");
+        if (!sqlchar_encoding)
+            return 0;
+    }
+    if (!sqlwchar_encoding) {
+        sqlwchar_encoding = PyString_FromString("utf_8");
+        if (!sqlwchar_encoding)
+            return 0;
+    }
+
+    return (PyObject*)Connection_New(pConnectString.Get(), fAutoCommit != 0, fAnsi != 0, fUnicodeResults != 0, timeout, fReadOnly != 0,
+                                     sqlchar_encoding.Get(), sqlwchar_encoding.Get());
 }
 
 

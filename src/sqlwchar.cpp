@@ -2,6 +2,7 @@
 #include "pyodbc.h"
 #include "sqlwchar.h"
 #include "wrapper.h"
+#include "connection.h"
 
 #ifdef HAVE_WCHAR_H
 static int WCHAR_T_SIZE = sizeof(wchar_t);
@@ -124,6 +125,7 @@ bool SQLWChar::Convert(PyObject* o)
     }
 }
 
+/*
 PyObject* PyUnicode_FromSQLCHAR(Connection* cnxn, const SQLCHAR* sz, Py_ssize_t cch)
 {
     const char* szErrors = "strict";
@@ -139,6 +141,7 @@ PyObject* PyUnicode_FromSQLCHAR(Connection* cnxn, const SQLCHAR* sz, Py_ssize_t 
         return PyUnicode_DecodeUTF8(sz, cch, szError);
 
 }
+*/
 
 PyObject* PyUnicode_FromSQLWCHAR(const SQLWCHAR* sz, Py_ssize_t cch)
 {
