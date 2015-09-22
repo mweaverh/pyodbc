@@ -123,24 +123,33 @@ static PyObject* CnxnInfo_New(Connection* cnxn)
     HSTMT hstmt = 0;
     if (SQL_SUCCEEDED(SQLAllocHandle(SQL_HANDLE_STMT, cnxn->hdbc, &hstmt)))
     {
-        SQLINTEGER columnsize;
-        if (SQL_SUCCEEDED(SQLGetTypeInfo(hstmt, SQL_TYPE_TIMESTAMP)) && SQL_SUCCEEDED(SQLFetch(hstmt)))
-            if (SQL_SUCCEEDED(SQLGetData(hstmt, 3, SQL_INTEGER, &columnsize, sizeof(columnsize), 0)))
-                p->datetime_precision = (int)columnsize;
-
-        if (SQL_SUCCEEDED(SQLGetTypeInfo(hstmt, SQL_VARCHAR)) && SQL_SUCCEEDED(SQLFetch(hstmt)))
-            if (SQL_SUCCEEDED(SQLGetData(hstmt, 3, SQL_INTEGER, &columnsize, sizeof(columnsize), 0)))
-                p->varchar_maxlength = (int)columnsize;
-
-        if (SQL_SUCCEEDED(SQLGetTypeInfo(hstmt, SQL_WVARCHAR)) && SQL_SUCCEEDED(SQLFetch(hstmt)))
-            if (SQL_SUCCEEDED(SQLGetData(hstmt, 3, SQL_INTEGER, &columnsize, sizeof(columnsize), 0)))
-                p->wvarchar_maxlength = (int)columnsize;
-
-        if (SQL_SUCCEEDED(SQLGetTypeInfo(hstmt, SQL_BINARY)) && SQL_SUCCEEDED(SQLFetch(hstmt)))
-            if (SQL_SUCCEEDED(SQLGetData(hstmt, 3, SQL_INTEGER, &columnsize, sizeof(columnsize), 0)))
-                p->binary_maxlength = (int)columnsize;
-
-        SQLFreeStmt(hstmt, SQL_CLOSE);
+        if (SQL_SUCCEEDED(SQLGetTypeInfo(hstmt, SQL_ALL_TYPES))) {
+          SQLINTEGER columnsize;
+          SQLSMALLINT data_type;
+          SQLBindCol(hstmt, 2, SQL_SMALLINT, &data_type, sizeof(data_type), 0);
+          SQLBindCol(hstmt, 3, SQL_INTEGER, &columnsize, sizeof(columnsize), 0);
+          SQLRETURN ret;
+          while (SQL_SUCCEEDED(ret = SQLFetch(hstmt)) && ret != SQL_NO_DATA) {
+            switch(data_type)
+            {
+            case SQL_TYPE_TIMESTAMP:
+              p->datetime_precision = (int)columnsize;
+              break;
+            case SQL_VARCHAR:
+              p->varchar_maxlength = (int)columnsize;
+              break;
+            case SQL_WVARCHAR:
+              p->wvarchar_maxlength = (int)columnsize;
+              break;
+            case SQL_BINARY:
+              p->binary_maxlength = (int)columnsize;
+              break;
+            default:
+              break;  // Ignore
+            }
+          }
+        }
+        SQLFreeHandle(SQL_HANDLE_STMT, hstmt);
     }
 
     Py_END_ALLOW_THREADS
