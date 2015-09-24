@@ -117,6 +117,7 @@ def get_compiler_settings(version_str):
     settings = { 
         'extra_compile_args' : [],
         'libraries': [],
+        'library_dirs': [],
         'include_dirs': [],
         'define_macros' : [ ('PYODBC_VERSION', version_str) ] 
     }
@@ -185,6 +186,12 @@ def get_compiler_settings(version_str):
 
         # What is the proper way to detect iODBC, MyODBC, unixODBC, etc.?
         settings['libraries'].append('odbc')
+        # For unusual locations of libodbc.so and Python.h, set environment
+        # variables LD_RUN_PATH and INCLUDE_PATH respectively.
+        if os.getenv('LD_RUN_PATH'):
+            settings['library_dirs'].extend(os.getenv('LD_RUN_PATH').split(':'))
+        if os.getenv('INCLUDE_PATH'):
+            settings['include_dirs'].extend(os.getenv('INCLUDE_PATH').split(':'))
 
     return settings
 
