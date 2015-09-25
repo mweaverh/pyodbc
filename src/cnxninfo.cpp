@@ -141,7 +141,7 @@ static PyObject* CnxnInfo_New(Connection* cnxn)
             case SQL_WVARCHAR:
               p->wvarchar_maxlength = (int)columnsize;
               break;
-            case SQL_BINARY:
+            case SQL_VARBINARY:
               p->binary_maxlength = (int)columnsize;
               break;
             default:
