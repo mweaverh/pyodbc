@@ -243,6 +243,7 @@ PyObject* Connection_New(PyObject* pConnectString, bool fAutoCommit, bool fAnsi,
     cnxn->conv_count      = 0;
     cnxn->conv_types      = 0;
     cnxn->conv_funcs      = 0;
+    cnxn->current_catalog = 0;
 
     //
     // Initialize autocommit mode.
@@ -876,6 +877,60 @@ static int Connection_settimeout(PyObject* self, PyObject* value, void* closure)
     return 0;
 }
 
+static PyObject* Connection_getcurrentcatalog(PyObject* self, void* closure)
+{
+    UNUSED(closure);
+    Connection* cnxn = Connection_Validate(self);
+    if (!cnxn)
+        return 0;
+    if (!cnxn->current_catalog) {
+        char sz[128] = { 0 };
+        SQLINTEGER cch = 0;
+        SQLRETURN ret;
+        Py_BEGIN_ALLOW_THREADS
+        ret = SQLGetConnectAttr(cnxn->hdbc, SQL_ATTR_CURRENT_CATALOG,
+                                &sz, _countof(sz), &cch);
+        Py_END_ALLOW_THREADS
+        if (!SQL_SUCCEEDED(ret))
+            return RaiseErrorFromHandle("SQLGetConnectAttr", cnxn->hdbc, SQL_NULL_HANDLE);
+        cnxn->current_catalog = PyString_FromStringAndSize(sz, (Py_ssize_t)cch);
+    }
+    Py_INCREF(cnxn->current_catalog);
+    return cnxn->current_catalog;
+}
+
+static int Connection_setcurrentcatalog(PyObject* self, PyObject* catalog_name, void* closure)
+{
+    UNUSED(closure);
+    Connection* cnxn = Connection_Validate(self);
+    if (!cnxn)
+        return -1;
+
+    if (catalog_name == 0)
+    {
+        PyErr_SetString(PyExc_TypeError, "Cannot delete the current catalog attribute.");
+        return -1;
+    }
+    if (!(PyString_Check(catalog_name) || PyUnicode_Check(catalog_name))) {
+        PyErr_SetString(PyExc_TypeError, "Invalid value for current_catalog.");
+        return -1;
+    }
+    SQLCHAR* catalog_name_str = (SQLCHAR*)PyString_AS_STRING(catalog_name);
+    SQLRETURN ret;
+    Py_BEGIN_ALLOW_THREADS
+    ret = SQLSetConnectAttr(cnxn->hdbc, SQL_ATTR_CURRENT_CATALOG, catalog_name_str, SQL_NTS);
+    Py_END_ALLOW_THREADS
+    if (!SQL_SUCCEEDED(ret))
+    {
+        RaiseErrorFromHandle("SQLSetConnectAttr", cnxn->hdbc, SQL_NULL_HANDLE);
+        return -1;
+    }
+    Py_XDECREF(cnxn->current_catalog);
+    cnxn->current_catalog = catalog_name;
+    Py_INCREF(cnxn->current_catalog);
+    return 0;
+}
+
 static bool _add_converter(PyObject* self, SQLSMALLINT sqltype, PyObject* func)
 {
     Connection* cnxn = (Connection*)self;
@@ -1020,6 +1075,8 @@ static PyGetSetDef Connection_getseters[] = {
       "Returns True if the connection is in autocommit mode; False otherwise.", 0 },
     { "timeout", Connection_gettimeout, Connection_settimeout,
       "The timeout in seconds, zero means no timeout.", 0 },
+    { "current_catalog", Connection_getcurrentcatalog, Connection_setcurrentcatalog,
+      "Name of the current catalog used by the data source", 0 },
     { 0 }
 };
 

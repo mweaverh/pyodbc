@@ -61,6 +61,8 @@ struct Connection
     int binary_maxlength;
     bool need_long_data_len;
 
+    PyObject* current_catalog;
+
     // Output conversions.  Maps from SQL type in conv_types to the converter function in conv_funcs.
     //
     // If conv_count is zero, conv_types and conv_funcs will also be zero.
